@@ -1,0 +1,21 @@
+{
+  "name": "Trap Builders",
+  "genre": "platformer",
+  "dim": "2D",
+  "mode": "Party",
+  "players": "2–8",
+  "hook": "Build the level, then race it. Traps welcome.",
+  "how": "Each round everyone grabs a piece from the box and places it on the shared level, then everyone races to the flag. Make it to the flag for points, but a level everyone beats (or nobody beats) pays almost nothing.",
+  "controls": "Mouse to place, arrows or A/D and Space to run and jump; on touch, tap to place and ◀ ▶ Jump to run",
+  "uses": [
+    ["Leaderboard", "The players who won the most matches."],
+    ["Host-run rounds", "The host's browser deals the pieces, checks every placement, scores each run and starts the next round; if it leaves, the next player takes over."],
+    ["Bots", "Bots pick pieces, set traps and race the level until enough people join."],
+    ["Live sync", "Everyone sees the same level grow, and every ghost piece, runner and fall at once."]
+  ],
+  "ideas": [
+    "Add a bomb piece that blows up a piece already on the level",
+    "Make the level a haunted castle with a lava floor",
+    "Give points to the player whose trap catches the most people"
+  ]
+}
