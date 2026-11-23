@@ -387,7 +387,7 @@ function syncBotBodies(g, now) {
   g.pl.forEach((e, slot) => { if (e.b && !host.bots.has(e.i)) { const pace = CONFIG.botPace[0] + Math.random() * (CONFIG.botPace[1] - CONFIG.botPace[0]); host.bots.set(e.i, Object.assign(newRunner(startX(slot), SPAWN_Y), { id: e.i, pace, gx: 14 + Math.random() * 8, gy: 3 + Math.random() * 3, go: -1, progressAt: now })); } });
 }
 function seatBots(g, now) { // a run starts: every bot back on the start line
-  g.pl.forEach((e, slot) => { const b = host.bots.get(e.i); if (b) Object.assign(placeRunner(b, startX(slot), SPAWN_Y), { plan: null, cur: { dir: 0 }, bestX: 0, progressAt: now, waitUntil: now + Math.random() * 300 }); });
+  g.pl.forEach((e, slot) => { const b = host.bots.get(e.i); if (b) Object.assign(placeRunner(b, startX(slot), SPAWN_Y), { plan: null, cur: { dir: 0 }, bestX: 0, leapt: false, progressAt: now, waitUntil: now + Math.random() * 300 }); });
 }
 const itemOf = (g, id) => g.box.findIndex((b) => b.by === id);
 /** People who arrive while pieces are being picked play this round: they take a bot's seat (and its piece goes back in the box). */
@@ -439,13 +439,15 @@ function toRun(g) {
   const T = clock();
   return writeGame({ ...g, box: g.box.map((b) => ({ ...b, pl: b.by ? 1 : 0 })), phase: "run", go: T + CONFIG.countdown, at: T + CONFIG.countdown + CONFIG.runMs });
 }
+/** A finish time a player reports, if the host believes it: past the flag, and no faster than running flat out from the start line. */
+const fairFin = (p) => (p.fin && p.x > FLAG.x - 0.5 && p.fin >= ((FLAG.x - 0.4 - startX(7)) / CONFIG.run) * 900 ? p.fin : 0);
 /** How runner e did this run: { fin (ms, 0 = didn't), dead, k (piece that got it) }. Someone who left counts as out. */
 function runResult(g, e) {
   if (e.b) { const b = host.bots.get(e.i); return b ? { fin: b.fin, dead: b.dead, k: b.killer } : { fin: 0, dead: true, k: -1 }; }
   if (e.i === me.id) return me.runId === g.id ? { fin: me.fin, dead: me.dead, k: me.killer } : { fin: 0, dead: false, k: -1 };
   const p = parse(S.entities.players[e.i]?.p, null);
-  if (!livePlayers().includes(e.i)) return { fin: p && p.r === g.id ? p.fin || 0 : 0, dead: true, k: -1 };
-  return p && p.r === g.id ? { fin: p.fin || 0, dead: !!p.d, k: p.k ?? -1 } : { fin: 0, dead: false, k: -1 };
+  if (!livePlayers().includes(e.i)) return { fin: p && p.r === g.id ? fairFin(p) : 0, dead: true, k: -1 };
+  return p && p.r === g.id ? { fin: fairFin(p), dead: !!p.d, k: Number.isInteger(p.k) ? p.k : -1 } : { fin: 0, dead: false, k: -1 };
 }
 const runDone = (g) => g.pl.every((e) => { const r = runResult(g, e); return r.fin || r.dead; });
 /** The run is over: points for everyone, in ONE write. */
@@ -459,7 +461,7 @@ function scoreRun(g) {
     for (const r of made) { r.g += CONFIG.ptsFinish; r.w.push("made it"); }
     made[0].g += CONFIG.ptsFirst; made[0].w.push("first");
     if (made.length === 1) { made[0].g += CONFIG.ptsSolo; made[0].w.push("solo"); }
-    for (const r of res) { const p = r.dead && r.k >= 0 ? L.pieces[r.k] : null, owner = p && res.find((q) => q.i === p[4] && q.i !== r.i); if (owner) { owner.g += CONFIG.ptsTrap; owner.w.push("trap"); } }
+    for (const r of res) { const p = r.dead && r.k >= 0 && PIECES[L.pieces[r.k]?.[0]]?.trap ? L.pieces[r.k] : null, owner = p && res.find((q) => q.i === p[4] && q.i !== r.i); if (owner) { owner.g += CONFIG.ptsTrap; owner.w.push("trap"); } }
   }
   let pieces = levelState().p;
   if (nf >= 1) { // too hard: the newest pieces break off
@@ -564,15 +566,15 @@ const PLANS = [{ hold: 1, run: 9 }, { hold: 1, run: 0.42 }, { hold: 1, run: 0.22
 function lookAhead(b) {
   const c = Math.floor(b.x + HW + 0.3 + Math.max(0, b.vx) * 0.12), body = Math.floor(b.y - 0.5); // further ahead when running fast
   if (solid(c, body) || solid(c, Math.floor(b.y - HH + 0.05))) return "wall";
-  for (let r = body; r <= body + 4 && r < ROWS; r++) { const ch = tileAt(c, r); if (ch === "^") return "spike"; if (ch === "T") return "spring"; if (SOLID.includes(ch)) return "ok"; }
+  for (let r = body; r <= body + 4 && r < ROWS; r++) { const ch = tileAt(c, r); if (ch === "^") return "spike"; if (ch === "T") return "spring"; if (SOLID.includes(ch)) return r <= body + 2 ? "ok" : "pit"; } // a floor more than a step down is a drop: test it like a pit
   return "pit";
 }
 const SIM_DT = 1 / 60; // the same step a 60 Hz screen takes, so a test jump lands where the real one will
 const cloneRunner = (b) => Object.assign(newRunner(b.x, b.y), { vx: b.vx, vy: b.vy, ground: b.ground, coyote: b.ground ? 0.1 : 0, pace: b.pace });
-/** Would doing `inp` for `secs` get this runner hurt (or drop it down a pit)? */
+/** Would doing `inp` for `secs` get this runner hurt (or drop it down a pit, even one with a floor below the ground)? */
 function diesDoing(b, t, inp, secs) {
   const s = cloneRunner(b), dt = SIM_DT;
-  for (let i = 1; i <= secs / dt; i++) { stepRunner(s, inp, dt, t + i * dt); if (s.dead || s.y > b.y + 3) return true; }
+  for (let i = 1; i <= secs / dt; i++) { stepRunner(s, inp, dt, t + i * dt); if (s.dead || s.y > Math.max(b.y, SPAWN_Y) + 1.5) return true; }
   return false;
 }
 /** Can this runner keep running right a few more frames and still be on the ground (and unhurt)? */
@@ -583,8 +585,9 @@ function runwayLeft(b, t) {
 }
 /** What a move presses `el` seconds after it starts (the same for the test in its head and the real thing). */
 const planInput = (plan, el, b) => ({ dir: el < plan.run || (b.boosted && plan.run > 1) ? 1 : 0, held: el < plan.hold });
-/** Try a jump without taking it: does it come down safely, further along (and stay safe a moment)? */
-function jumpWorks(b, t, plan) {
+/** Try a jump without taking it: does it come down safely, further along (and stay safe a moment)?
+ *  Landing lower than it is and below the ground (in a pit with a floor) only counts if another jump gets it out again. */
+function jumpWorks(b, t, plan, deep = false) {
   const s = cloneRunner(b), dt = SIM_DT;
   let flew = false;
   for (let i = 1; i <= 3.2 / dt; i++) {
@@ -593,7 +596,11 @@ function jumpWorks(b, t, plan) {
     if (touchingFlag(s)) return true;
     if (!s.ground) flew = true;
     else if (!flew && i * dt > plan.run + 0.1) return false; // never left the ground
-    if (flew && i > 6 && s.ground) return s.x > b.x + 0.6 && !diesDoing(s, t + i * dt, { dir: 0 }, 0.3);
+    if (flew && i > 6 && s.ground) {
+      if (s.x <= b.x + 0.6 || diesDoing(s, t + i * dt, { dir: 0 }, 0.3)) return false;
+      if (s.y <= (deep ? SPAWN_Y : Math.max(b.y, SPAWN_Y)) + 0.5) return true;
+      return !deep && PLANS.some((p) => jumpWorks(s, t + i * dt, p, true));
+    }
   }
   return false;
 }
@@ -626,8 +633,12 @@ function botRunTick(b, dt, now, t, g) {
   if (ev === "spring") springFx(b);
   if (touchingFlag(b)) { b.fin = Math.max(1, Math.round(clock() - g.go)); confetti(FLAG.x, FLAG.y - 3, 24); return; }
   if (!go) return;
-  if (b.x > b.bestX + 0.5) { b.bestX = b.x; b.progressAt = now; }
-  else if (now - b.progressAt > 7000) { b.progressAt = now; b.yolo = true; b.plan = { p: { hold: 0.9, run: 0.9 }, at: now }; } // stuck: take a wild leap
+  if (b.x > b.bestX + 0.5) { b.bestX = b.x; b.progressAt = now; b.leapt = false; }
+  else if (now - b.progressAt > 7000) { // stuck: take a wild leap; still stuck 7s later: give up (counts as out, so the run doesn't wait on it)
+    b.progressAt = now;
+    if (b.leapt) { b.dead = true; b.killer = -1; poof(b.x, b.y - 0.5, colorOf(b.id)); return; }
+    b.leapt = true; b.yolo = true; b.plan = { p: { hold: 0.9, run: 0.9 }, at: now };
+  }
 }
 
 // ── ME ──────────────────────────────────────────────────────────────────────────────
@@ -1056,7 +1067,7 @@ function renderCard(g, T) {
     $("cardBoard").hidden = true; $("again").hidden = true;
   } else {
     $("cardTitle").textContent = !g.winner ? "It's a draw!" : g.winner === me.id ? "You win!" : `${nameOf(g.winner)} wins!`;
-    $("cardSub").textContent = g.winner ? `First to ${CONFIG.winPoints} points` : "Nobody pulled ahead";
+    $("cardSub").textContent = !g.winner ? "Nobody pulled ahead" : Math.max(...g.pl.map((e) => e.s)) >= CONFIG.winPoints ? `First to ${CONFIG.winPoints} points` : `Most points after ${CONFIG.maxRounds} rounds`;
     $("cardList").innerHTML = rows.map((e) => `<li class="${e.i === me.id ? "me" : ""}">${esc(e.i === me.id ? "You" : nameOf(e.i))}${e.i === g.winner ? " 🏆" : ""}<span>${e.s}</span></li>`).join("");
     $("cardBoard").hidden = false; $("again").hidden = false;
     showBoard(g.winner === me.id && g.pl.some((e) => e.i === me.id));
@@ -1171,7 +1182,7 @@ function frame(now) {
   const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...(shared("game", null)?.pl || []).map((e) => e.c)]);
   me.id = net.sessionId; me.color = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
   net.me.set({ n: myName, c: me.color, hb: Date.now() });
-  if (ATTRACT) Object.assign(CONFIG, { seats: 6, pickMs: 1300, placeMs: 2400, countdown: 400, runMs: 7000, scoreMs: 1400, botPause: 0, boxWeights: { P: 3, I: 1, T: 1 } }); // the preview's traps are already placed
+  if (ATTRACT) Object.assign(CONFIG, { seats: 6, pickMs: 1300, placeMs: 2400, countdown: 400, runMs: 11000, scoreMs: 1400, botPause: 0, boxWeights: { P: 3, I: 1, T: 1 } }); // the preview's traps are already placed
   startedAt = performance.now();
   requestAnimationFrame(frame);
 })();
